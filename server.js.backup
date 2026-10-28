@@ -1,0 +1,256 @@
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+const nodemailer = require('nodemailer');
+require('dotenv').config();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+// Middleware
+app.use(cors());
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.static('public'));
+
+// Email transporter setup
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+    }
+});
+
+// Test email configuration
+transporter.verify((error, success) => {
+    if (error) {
+        console.log('Email configuration error:', error);
+    } else {
+        console.log('Email server is ready to send messages');
+    }
+});
+
+// API Routes
+app.get('/api/products', (req, res) => {
+    const products = require('./data/products.json');
+    
+    // Filter by category if provided
+    const category = req.query.category;
+    if (category && category !== 'all') {
+        const filteredProducts = products.filter(p => p.category === category);
+        return res.json(filteredProducts);
+    }
+    
+    res.json(products);
+});
+
+app.get('/api/products/:id', (req, res) => {
+    const products = require('./data/products.json');
+    const product = products.find(p => p.id === parseInt(req.params.id));
+    
+    if (product) {
+        res.json(product);
+    } else {
+        res.status(404).json({ error: 'Product not found' });
+    }
+});
+
+// Contact form submission
+app.post('/api/contact', async (req, res) => {
+    try {
+        const { name, email, phone, subject, message } = req.body;
+        
+        // Validate required fields
+        if (!name || !email || !subject || !message) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        
+        // Email content
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: process.env.CONTACT_EMAIL || process.env.EMAIL_USER,
+            subject: `Wayu Farms Contact: ${subject}`,
+            html: `
+                <h2>New Contact Form Submission</h2>
+                <p><strong>Name:</strong> ${name}</p>
+                <p><strong>Email:</strong> ${email}</p>
+                <p><strong>Phone:</strong> ${phone || 'Not provided'}</p>
+                <p><strong>Subject:</strong> ${subject}</p>
+                <p><strong>Message:</strong></p>
+                <p>${message}</p>
+                <hr>
+                <p><em>This message was sent from the Wayu Farms website contact form.</em></p>
+            `
+        };
+        
+        // Send email
+        await transporter.sendMail(mailOptions);
+        
+        // Send confirmation to user
+        const userMailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Thank you for contacting Wayu Farms',
+            html: `
+                <h2>Thank you for contacting Wayu Farms!</h2>
+                <p>Dear ${name},</p>
+                <p>We have received your message and will get back to you within 24 hours.</p>
+                <p><strong>Your message:</strong></p>
+                <p>${message}</p>
+                <hr>
+                <p><strong>Wayu Farms</strong><br>
+                Gujizone, Borena Region<br>
+                Phone: +251 912 345 678<br>
+                Email: info@wayufarms.com</p>
+            `
+        };
+        
+        await transporter.sendMail(userMailOptions);
+        
+        res.json({ success: true, message: 'Message sent successfully' });
+    } catch (error) {
+        console.error('Contact form error:', error);
+        res.status(500).json({ error: 'Failed to send message' });
+    }
+});
+
+// Order submission
+app.post('/api/order', async (req, res) => {
+    try {
+        const { name, email, phone, address, products, deliveryDate, notes } = req.body;
+        
+        // Validate required fields
+        if (!name || !phone || !address || !products) {
+            return res.status(400).json({ error: 'Missing required fields' });
+        }
+        
+        // Email content for farm
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: process.env.ORDER_EMAIL || process.env.EMAIL_USER,
+            subject: 'New Order - Wayu Farms',
+            html: `
+                <h2>New Order Received</h2>
+                <p><strong>Customer Name:</strong> ${name}</p>
+                <p><strong>Email:</strong> ${email || 'Not provided'}</p>
+                <p><strong>Phone:</strong> ${phone}</p>
+                <p><strong>Delivery Address:</strong> ${address}</p>
+                <p><strong>Preferred Delivery Date:</strong> ${deliveryDate || 'Not specified'}</p>
+                <p><strong>Products Requested:</strong></p>
+                <pre>${products}</pre>
+                ${notes ? `<p><strong>Additional Notes:</strong> ${notes}</p>` : ''}
+                <hr>
+                <p><em>This order was placed through the Wayu Farms website.</em></p>
+            `
+        };
+        
+        await transporter.sendMail(mailOptions);
+        
+        // Send confirmation to customer
+        if (email) {
+            const userMailOptions = {
+                from: process.env.EMAIL_USER,
+                to: email,
+                subject: 'Wayu Farms - Order Confirmation',
+                html: `
+                    <h2>Thank you for your order!</h2>
+                    <p>Dear ${name},</p>
+                    <p>We have received your order and will contact you shortly to confirm the details and arrange delivery.</p>
+                    <p><strong>Order Summary:</strong></p>
+                    <pre>${products}</pre>
+                    <p><strong>Delivery to:</strong> ${address}</p>
+                    ${deliveryDate ? `<p><strong>Preferred Delivery Date:</strong> ${deliveryDate}</p>` : ''}
+                    <hr>
+                    <p><strong>Wayu Farms</strong><br>
+                    Gujizone, Borena Region<br>
+                    Phone: +251 912 345 678<br>
+                    Email: orders@wayufarms.com</p>
+                `
+            };
+            
+            await transporter.sendMail(userMailOptions);
+        }
+        
+        res.json({ success: true, message: 'Order submitted successfully' });
+    } catch (error) {
+        console.error('Order submission error:', error);
+        res.status(500).json({ error: 'Failed to submit order' });
+    }
+});
+
+// Newsletter subscription
+app.post('/api/newsletter', async (req, res) => {
+    try {
+        const { email } = req.body;
+        
+        if (!email || !email.includes('@')) {
+            return res.status(400).json({ error: 'Valid email required' });
+        }
+        
+        // In a real app, save to database
+        console.log('New newsletter subscription:', email);
+        
+        // Send welcome email
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: email,
+            subject: 'Welcome to Wayu Farms Newsletter',
+            html: `
+                <h2>Welcome to Wayu Farms!</h2>
+                <p>Thank you for subscribing to our newsletter.</p>
+                <p>You'll now receive updates about:</p>
+                <ul>
+                    <li>Seasonal produce availability</li>
+                    <li>Farm events and open days</li>
+                    <li>Special offers and promotions</li>
+                    <li>Sustainable farming tips</li>
+                </ul>
+                <p>If you ever wish to unsubscribe, simply reply to this email.</p>
+                <hr>
+                <p><strong>Wayu Farms</strong><br>
+                Nurturing the land, feeding the community<br>
+                Gujizone, Borena Region</p>
+            `
+        };
+        
+        await transporter.sendMail(mailOptions);
+        
+        res.json({ success: true, message: 'Subscribed successfully' });
+    } catch (error) {
+        console.error('Newsletter error:', error);
+        res.status(500).json({ error: 'Failed to subscribe' });
+    }
+});
+
+// Weather API endpoint (proxy to avoid CORS)
+app.get('/api/weather', async (req, res) => {
+    try {
+        // In a real app, call a weather API with Borena coordinates
+        // For now, return mock data
+        const mockWeather = {
+            location: 'Gujizone, Borena',
+            temperature: '24°C',
+            condition: 'Sunny',
+            humidity: '65%',
+            forecast: [
+                { day: 'Today', high: '24°C', low: '16°C', condition: 'Sunny' },
+                { day: 'Tomorrow', high: '25°C', low: '17°C', condition: 'Partly Cloudy' },
+                { day: 'Day after', high: '23°C', low: '16°C', condition: 'Clear' }
+            ]
+        };
+        
+        // Simulate delay
+        setTimeout(() => {
+            res.json(mockWeather);
+        }, 500);
+    } catch (error) {
+        console.error('Weather API error:', error);
+        res.status(500).json({ error: 'Failed to fetch weather data' });
+    }
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Wayu Farms server running on port ${PORT}`);
+});
